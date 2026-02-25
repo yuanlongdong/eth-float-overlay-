@@ -20,14 +20,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:text="填入你的面板地址（建议带 ?mini=1）" />
+            android:text="原生版已内置行情源，无需填写隧道地址。" />
 
         <EditText
             android:id="@+id/inputUrl"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:hint="https://xxxx.lhr.life/?mini=1"
+            android:hint="可留空"
             android:inputType="textUri"
             android:maxLines="2" />
 

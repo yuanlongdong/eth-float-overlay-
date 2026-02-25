@@ -6,10 +6,14 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Handler
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -40,6 +44,8 @@ class OverlayService : Service() {
     private var valueEntry: TextView? = null
     private var valueSl: TextView? = null
     private var valueTp1: TextView? = null
+    private var lastSignal: String = ""
+    private var lastAlertAtMs: Long = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -147,7 +153,7 @@ class OverlayService : Service() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(8), dp(8), dp(8), dp(8))
-            layoutParams = LinearLayout.LayoutParams(dp(220), dp(250))
+            layoutParams = LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.WRAP_CONTENT)
         }
 
         valueUpdated = addItem(content, "更新", "--")
@@ -351,6 +357,7 @@ class OverlayService : Service() {
                     updated = trimTime(ts[i]),
                     statusLine = "本地策略"
                 )
+                maybeAlertSignalChanged(signal)
             } catch (_: Exception) {
                 postUi("-", "ERR", "-", "-", "-", "-", "--:--:--", "网络异常")
             } finally {
@@ -394,6 +401,49 @@ class OverlayService : Service() {
     private fun formatNum(v: Double): String {
         if (v.isNaN()) return "-"
         return String.format(Locale.US, "%.2f", v)
+    }
+
+    private fun maybeAlertSignalChanged(signal: String) {
+        if (lastSignal.isEmpty()) {
+            lastSignal = signal
+            return
+        }
+        if (signal == lastSignal) return
+
+        val now = System.currentTimeMillis()
+        if (now - lastAlertAtMs < 15000) {
+            lastSignal = signal
+            return
+        }
+        lastSignal = signal
+        lastAlertAtMs = now
+
+        mainHandler.post {
+            playSignalTone(signal)
+            vibrateSignal()
+        }
+    }
+
+    private fun playSignalTone(signal: String) {
+        val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
+        val toneType = when (signal) {
+            "LONG" -> ToneGenerator.TONE_PROP_ACK
+            "SHORT" -> ToneGenerator.TONE_SUP_ERROR
+            else -> ToneGenerator.TONE_PROP_BEEP
+        }
+        tone.startTone(toneType, 260)
+        mainHandler.postDelayed({ tone.release() }, 350)
+    }
+
+    private fun vibrateSignal() {
+        val vibrator = getSystemService(VIBRATOR_SERVICE) as Vibrator
+        if (!vibrator.hasVibrator()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createOneShot(220, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator.vibrate(220)
+        }
     }
 
     private fun ema(values: DoubleArray, period: Int): DoubleArray {

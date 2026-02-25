@@ -126,7 +126,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                val current = BuildConfig.VERSION_NAME
+                val current = getCurrentVersionName()
                 val hasUpdate = isRemoteNewer(latestTag, current)
 
                 runOnUiThread {
@@ -178,6 +178,15 @@ class MainActivity : AppCompatActivity() {
             if (a[i] != b[i]) return a[i] - b[i]
         }
         return 0
+    }
+
+    private fun getCurrentVersionName(): String {
+        return try {
+            val info = packageManager.getPackageInfo(packageName, 0)
+            info.versionName ?: "0.0.0"
+        } catch (_: Exception) {
+            "0.0.0"
+        }
     }
 
     companion object {

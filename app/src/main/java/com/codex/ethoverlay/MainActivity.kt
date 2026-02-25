@@ -27,7 +27,7 @@ class MainActivity : AppCompatActivity() {
         val stopBtn = findViewById<Button>(R.id.btnStop)
 
         val pref = getSharedPreferences("overlay_pref", MODE_PRIVATE)
-        val savedUrl = pref.getString("panel_url", "https://c60bcff2154b64.lhr.life/?mini=1") ?: ""
+        val savedUrl = pref.getString("panel_url", "") ?: ""
         urlInput.setText(savedUrl)
 
         grantBtn.setOnClickListener { openOverlayPermission() }
@@ -52,7 +52,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 startService(intent)
             }
-            statusText.text = "浮窗已启动"
+            statusText.text = "浮窗已启动（原生行情模式）"
         }
 
         stopBtn.setOnClickListener {

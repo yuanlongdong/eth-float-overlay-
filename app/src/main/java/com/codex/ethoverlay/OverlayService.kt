@@ -6,26 +6,40 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.os.Handler
 import android.os.Build
 import android.os.IBinder
+import android.os.Looper
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Locale
+import kotlin.concurrent.thread
 
 class OverlayService : Service() {
 
     private var windowManager: WindowManager? = null
     private var overlayRoot: LinearLayout? = null
-    private var webView: WebView? = null
-    private var panelUrl: String = "https://c60bcff2154b64.lhr.life/?mini=1"
+    private var panelUrl: String = "https://cdaae6da237dbb.lhr.life/?mini=1"
+    private var apiUrl: String = toApiUrl(panelUrl)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var polling = false
+
+    private var valueUpdated: TextView? = null
+    private var valuePrice: TextView? = null
+    private var valueSignal: TextView? = null
+    private var valueTrend: TextView? = null
+    private var valueEntry: TextView? = null
+    private var valueSl: TextView? = null
+    private var valueTp1: TextView? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -37,8 +51,9 @@ class OverlayService : Service() {
             }
             ACTION_START, null -> {
                 panelUrl = normalizeUrl(intent?.getStringExtra(EXTRA_URL))
+                apiUrl = toApiUrl(panelUrl)
                 startInForeground()
-                showOverlay(panelUrl)
+                showOverlay()
                 return START_STICKY
             }
             else -> return START_NOT_STICKY
@@ -72,9 +87,9 @@ class OverlayService : Service() {
         startForeground(101, notification)
     }
 
-    private fun showOverlay(url: String) {
+    private fun showOverlay() {
         if (overlayRoot != null) {
-            webView?.loadUrl(url)
+            startPolling()
             return
         }
 
@@ -130,21 +145,26 @@ class OverlayService : Service() {
         header.addView(btnMin)
         header.addView(btnClose)
 
-        val wv = WebView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(dp(220), dp(320))
-            webViewClient = WebViewClient()
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.cacheMode = WebSettings.LOAD_NO_CACHE
-            loadUrl(url)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(8), dp(8), dp(8))
+            layoutParams = LinearLayout.LayoutParams(dp(220), dp(250))
         }
 
+        valueUpdated = addItem(content, "更新", "--")
+        valuePrice = addItem(content, "价格", "-")
+        valueSignal = addItem(content, "信号", "-")
+        valueTrend = addItem(content, "趋势", "-")
+        valueEntry = addItem(content, "进场", "-")
+        valueSl = addItem(content, "止损", "-")
+        valueTp1 = addItem(content, "止盈1", "-")
+
         root.addView(header)
-        root.addView(wv)
+        root.addView(content)
 
         btnMin.setOnClickListener {
-            val hidden = wv.visibility == View.GONE
-            wv.visibility = if (hidden) View.VISIBLE else View.GONE
+            val hidden = content.visibility == View.GONE
+            content.visibility = if (hidden) View.VISIBLE else View.GONE
             btnMin.setImageResource(
                 if (hidden) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
             )
@@ -158,7 +178,7 @@ class OverlayService : Service() {
 
         windowManager?.addView(root, params)
         overlayRoot = root
-        webView = wv
+        startPolling()
     }
 
     private fun attachDragListener(handle: View, params: WindowManager.LayoutParams) {
@@ -191,8 +211,7 @@ class OverlayService : Service() {
     }
 
     private fun removeOverlay() {
-        webView?.destroy()
-        webView = null
+        stopPolling()
         overlayRoot?.let { root ->
             windowManager?.removeView(root)
         }
@@ -207,6 +226,131 @@ class OverlayService : Service() {
         } else {
             "https://$candidate"
         }
+    }
+
+    private fun toApiUrl(url: String): String {
+        return url
+            .replace(Regex("/\\?mini=1$"), "")
+            .replace(Regex("/$"), "") + "/api/state"
+    }
+
+    private fun addItem(parent: LinearLayout, label: String, value: String): TextView {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(3), 0, dp(3))
+        }
+        val left = TextView(this).apply {
+            text = "$label:"
+            setTextColor(0xFF9FC7B3.toInt())
+            textSize = 12f
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        val right = TextView(this).apply {
+            text = value
+            setTextColor(0xFFEAFCF3.toInt())
+            textSize = 13f
+        }
+        row.addView(left)
+        row.addView(right)
+        parent.addView(row)
+        return right
+    }
+
+    private fun startPolling() {
+        if (polling) return
+        polling = true
+        schedulePoll(0)
+    }
+
+    private fun stopPolling() {
+        polling = false
+        mainHandler.removeCallbacksAndMessages(null)
+    }
+
+    private fun schedulePoll(delayMs: Long) {
+        mainHandler.postDelayed({
+            if (!polling) return@postDelayed
+            fetchState()
+        }, delayMs)
+    }
+
+    private fun fetchState() {
+        thread {
+            try {
+                val conn = URL(apiUrl).openConnection() as HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 6000
+                conn.readTimeout = 6000
+                conn.setRequestProperty("Accept", "application/json")
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                conn.disconnect()
+
+                val root = JSONObject(body)
+                val snap = root.optJSONObject("snapshot")
+                val status = root.optString("status", "-")
+                val updated = root.optString("updatedAt", "-")
+
+                if (snap == null) {
+                    postUi("-", "-", "-", "-", "-", "-", "-", "状态: $status")
+                } else {
+                    val live = snap.optDouble("livePrice")
+                    val signal = snap.optString("signal", "-").uppercase(Locale.getDefault())
+                    val trend = snap.optString("trend", "-")
+                    val entry = snap.optDouble("entry")
+                    val sl = snap.optDouble("sl")
+                    val tp1 = snap.optDouble("tp1")
+                    postUi(
+                        formatNum(live),
+                        signal,
+                        trend,
+                        formatNum(entry),
+                        formatNum(sl),
+                        formatNum(tp1),
+                        trimIso(updated),
+                        "状态: $status"
+                    )
+                }
+            } catch (_: Exception) {
+                postUi("-", "ERR", "-", "-", "-", "-", "--:--:--", "网络异常")
+            } finally {
+                schedulePoll(3000)
+            }
+        }
+    }
+
+    private fun postUi(
+        price: String,
+        signal: String,
+        trend: String,
+        entry: String,
+        sl: String,
+        tp1: String,
+        updated: String,
+        statusLine: String
+    ) {
+        mainHandler.post {
+            valueUpdated?.text = updated
+            valuePrice?.text = price
+            valueSignal?.text = signal
+            valueTrend?.text = trend
+            valueEntry?.text = entry
+            valueSl?.text = sl
+            valueTp1?.text = tp1
+            if (statusLine.isNotEmpty()) {
+                valueTrend?.text = "$trend ($statusLine)"
+            }
+        }
+    }
+
+    private fun trimIso(iso: String): String {
+        if (iso.length < 19) return iso
+        return iso.substring(11, 19)
+    }
+
+    private fun formatNum(v: Double): String {
+        if (v.isNaN()) return "-"
+        return String.format(Locale.US, "%.2f", v)
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

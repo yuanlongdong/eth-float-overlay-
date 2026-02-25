@@ -19,6 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.ImageButton
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
@@ -121,14 +122,14 @@ class OverlayService : Service() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setBackgroundColor(0xFF193038.toInt())
-            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setPadding(dp(6), dp(3), dp(6), dp(3))
             gravity = Gravity.CENTER_VERTICAL
         }
 
         val title = TextView(this).apply {
             text = "ETH 15m"
             setTextColor(0xFFEAFCF3.toInt())
-            textSize = 14f
+            textSize = 12f
             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
         }
 
@@ -137,6 +138,9 @@ class OverlayService : Service() {
             setBackgroundColor(0x00000000)
             setColorFilter(0xFFEAFCF3.toInt())
             contentDescription = "最小化"
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(0, 0, 0, 0)
         }
 
         val btnClose = ImageButton(this).apply {
@@ -144,6 +148,9 @@ class OverlayService : Service() {
             setBackgroundColor(0x00000000)
             setColorFilter(0xFFEAFCF3.toInt())
             contentDescription = "关闭"
+            layoutParams = LinearLayout.LayoutParams(dp(20), dp(20))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(0, 0, 0, 0)
         }
 
         header.addView(title)

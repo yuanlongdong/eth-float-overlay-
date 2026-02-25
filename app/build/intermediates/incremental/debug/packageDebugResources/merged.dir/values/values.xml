@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:ns1="http://schemas.android.com/tools">
+    <color name="colorOnPrimary">#EAFCF3</color>
+    <color name="colorPrimary">#0F1E22</color>
+    <style name="Theme.EthOverlay" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorOnPrimary">@color/colorOnPrimary</item>
+        <item name="android:statusBarColor" ns1:targetApi="l">@color/colorPrimary</item>
+    </style>
+</resources>

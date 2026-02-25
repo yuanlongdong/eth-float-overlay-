@@ -18,6 +18,7 @@ import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -28,8 +29,7 @@ class OverlayService : Service() {
 
     private var windowManager: WindowManager? = null
     private var overlayRoot: LinearLayout? = null
-    private var panelUrl: String = "https://cdaae6da237dbb.lhr.life/?mini=1"
-    private var apiUrl: String = toApiUrl(panelUrl)
+    private var panelUrl: String = "https://api.binance.com"
     private val mainHandler = Handler(Looper.getMainLooper())
     private var polling = false
 
@@ -51,7 +51,6 @@ class OverlayService : Service() {
             }
             ACTION_START, null -> {
                 panelUrl = normalizeUrl(intent?.getStringExtra(EXTRA_URL))
-                apiUrl = toApiUrl(panelUrl)
                 startInForeground()
                 showOverlay()
                 return START_STICKY
@@ -278,7 +277,7 @@ class OverlayService : Service() {
     private fun fetchState() {
         thread {
             try {
-                val conn = URL(apiUrl).openConnection() as HttpURLConnection
+                val conn = URL("https://api.binance.com/api/v3/klines?symbol=ETHUSDT&interval=15m&limit=300").openConnection() as HttpURLConnection
                 conn.requestMethod = "GET"
                 conn.connectTimeout = 6000
                 conn.readTimeout = 6000
@@ -286,31 +285,72 @@ class OverlayService : Service() {
                 val body = conn.inputStream.bufferedReader().use { it.readText() }
                 conn.disconnect()
 
-                val root = JSONObject(body)
-                val snap = root.optJSONObject("snapshot")
-                val status = root.optString("status", "-")
-                val updated = root.optString("updatedAt", "-")
+                val arr = JSONArray(body)
+                val n = arr.length()
+                if (n < 220) throw IllegalStateException("kline too short")
 
-                if (snap == null) {
-                    postUi("-", "-", "-", "-", "-", "-", "-", "状态: $status")
-                } else {
-                    val live = snap.optDouble("livePrice")
-                    val signal = snap.optString("signal", "-").uppercase(Locale.getDefault())
-                    val trend = snap.optString("trend", "-")
-                    val entry = snap.optDouble("entry")
-                    val sl = snap.optDouble("sl")
-                    val tp1 = snap.optDouble("tp1")
-                    postUi(
-                        formatNum(live),
-                        signal,
-                        trend,
-                        formatNum(entry),
-                        formatNum(sl),
-                        formatNum(tp1),
-                        trimIso(updated),
-                        "状态: $status"
-                    )
+                val close = DoubleArray(n)
+                val high = DoubleArray(n)
+                val low = DoubleArray(n)
+                val ts = LongArray(n)
+                for (i in 0 until n) {
+                    val k = arr.getJSONArray(i)
+                    ts[i] = k.getLong(0)
+                    high[i] = k.getString(2).toDouble()
+                    low[i] = k.getString(3).toDouble()
+                    close[i] = k.getString(4).toDouble()
                 }
+
+                val ema20 = ema(close, 20)
+                val ema50 = ema(close, 50)
+                val ema200 = ema(close, 200)
+                val rsi14 = rsi(close, 14)
+                val atr14 = atr(high, low, close, 14)
+
+                val i = n - 1
+                val c = i - 1
+                val live = close[i]
+                val cClose = close[c]
+
+                val trend = if (ema20[c] > ema50[c] && ema50[c] > ema200[c]) {
+                    "bullish"
+                } else if (ema20[c] < ema50[c] && ema50[c] < ema200[c]) {
+                    "bearish"
+                } else {
+                    "mixed"
+                }
+
+                val signal = if (trend == "bullish" && rsi14[c] in 45.0..70.0 && cClose > ema20[c]) {
+                    "LONG"
+                } else if (trend == "bearish" && rsi14[c] in 30.0..55.0 && cClose < ema20[c]) {
+                    "SHORT"
+                } else {
+                    "WAIT"
+                }
+
+                val from = maxOf(0, c - 31)
+                var swingHigh = high[from]
+                var swingLow = low[from]
+                for (j in from..c) {
+                    if (high[j] > swingHigh) swingHigh = high[j]
+                    if (low[j] < swingLow) swingLow = low[j]
+                }
+
+                val entry = if (signal == "LONG") maxOf(high[c], ema20[c]) else minOf(low[c], ema20[c])
+                val sl = if (signal == "LONG") minOf(ema50[c], swingLow) - 0.25 * atr14[c] else maxOf(ema50[c], swingHigh) + 0.25 * atr14[c]
+                val rr = kotlin.math.abs(entry - sl)
+                val tp1 = if (signal == "LONG") entry + rr else entry - rr
+
+                postUi(
+                    price = formatNum(live),
+                    signal = signal,
+                    trend = trend,
+                    entry = formatNum(entry),
+                    sl = formatNum(sl),
+                    tp1 = formatNum(tp1),
+                    updated = trimTime(ts[i]),
+                    statusLine = "本地策略"
+                )
             } catch (_: Exception) {
                 postUi("-", "ERR", "-", "-", "-", "-", "--:--:--", "网络异常")
             } finally {
@@ -343,14 +383,73 @@ class OverlayService : Service() {
         }
     }
 
-    private fun trimIso(iso: String): String {
-        if (iso.length < 19) return iso
-        return iso.substring(11, 19)
+    private fun trimTime(ms: Long): String {
+        val sec = ms / 1000
+        val h = (sec / 3600) % 24
+        val m = (sec / 60) % 60
+        val s = sec % 60
+        return String.format(Locale.US, "%02d:%02d:%02d", h, m, s)
     }
 
     private fun formatNum(v: Double): String {
         if (v.isNaN()) return "-"
         return String.format(Locale.US, "%.2f", v)
+    }
+
+    private fun ema(values: DoubleArray, period: Int): DoubleArray {
+        val out = DoubleArray(values.size)
+        val k = 2.0 / (period + 1)
+        out[0] = values[0]
+        for (i in 1 until values.size) {
+            out[i] = values[i] * k + out[i - 1] * (1 - k)
+        }
+        return out
+    }
+
+    private fun rsi(values: DoubleArray, period: Int): DoubleArray {
+        val out = DoubleArray(values.size)
+        var avgGain = 0.0
+        var avgLoss = 0.0
+        for (i in 1..period) {
+            val d = values[i] - values[i - 1]
+            if (d >= 0) avgGain += d else avgLoss += -d
+        }
+        avgGain /= period
+        avgLoss /= period
+        out[period] = if (avgLoss == 0.0) 100.0 else 100.0 - 100.0 / (1 + avgGain / avgLoss)
+        for (i in period + 1 until values.size) {
+            val d = values[i] - values[i - 1]
+            val gain = if (d > 0) d else 0.0
+            val loss = if (d < 0) -d else 0.0
+            avgGain = (avgGain * (period - 1) + gain) / period
+            avgLoss = (avgLoss * (period - 1) + loss) / period
+            out[i] = if (avgLoss == 0.0) 100.0 else 100.0 - 100.0 / (1 + avgGain / avgLoss)
+        }
+        for (i in 0 until period) out[i] = out[period]
+        return out
+    }
+
+    private fun atr(high: DoubleArray, low: DoubleArray, close: DoubleArray, period: Int): DoubleArray {
+        val tr = DoubleArray(close.size)
+        tr[0] = high[0] - low[0]
+        for (i in 1 until close.size) {
+            val a = high[i] - low[i]
+            val b = kotlin.math.abs(high[i] - close[i - 1])
+            val c = kotlin.math.abs(low[i] - close[i - 1])
+            tr[i] = maxOf(a, b, c)
+        }
+        val out = DoubleArray(close.size)
+        var prev = 0.0
+        for (i in 0 until period) prev += tr[i]
+        prev /= period
+        for (i in tr.indices) {
+            if (i < period) out[i] = prev
+            else {
+                prev = (prev * (period - 1) + tr[i]) / period
+                out[i] = prev
+            }
+        }
+        return out
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()

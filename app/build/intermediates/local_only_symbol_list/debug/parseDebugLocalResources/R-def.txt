@@ -1,0 +1,11 @@
+R_DEF: Internal format may change without notice
+local
+color colorOnPrimary
+color colorPrimary
+id btnGrant
+id btnStart
+id btnStop
+id inputUrl
+id txtStatus
+layout activity_main
+style Theme.EthOverlay
